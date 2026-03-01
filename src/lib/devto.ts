@@ -14,7 +14,7 @@ export async function publishToDevTo(post: {
         article: {
           title: post.title,
           body_markdown: post.body,
-          published: true,
+          published: false,
           tags: post.tags.slice(0, 4),
         },
       }),
@@ -23,8 +23,8 @@ export async function publishToDevTo(post: {
       console.error("dev.to publish failed:", await res.text());
       return null;
     }
-    const data = await res.json();
-    return data.url as string;
+    await res.json();
+    return "https://dev.to/dashboard";
   } catch (err) {
     console.error("dev.to publish error:", err);
     return null;

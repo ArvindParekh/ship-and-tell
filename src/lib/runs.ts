@@ -68,6 +68,7 @@ export function createRun(data: {
     },
     devtoUrl: null,
     slackPosted: false,
+    slackMessageTs: null,
   };
 
   runs.set(id, run);

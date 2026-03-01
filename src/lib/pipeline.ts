@@ -12,14 +12,13 @@ import {
   runTimingAnalyst,
   runSynthesizer,
 } from "@/lib/agents";
-import { publishToDevTo } from "@/lib/devto";
 import { postToSlack } from "@/lib/slack";
 import type { AgentName } from "@/lib/types";
 
 /**
  * Runs the full agent pipeline for a given run ID.
  * Fires all 5 research agents in parallel, then runs the synthesizer,
- * publishes to dev.to, and posts to Slack.
+ * and posts to Slack with one-click publish buttons.
  *
  * This is intentionally fire-and-forget -- call it without awaiting
  * so the HTTP response returns immediately.
@@ -84,7 +83,6 @@ export async function processRun(
           status: "done",
           output,
           reasoning,
-          streamingOutput: "", // clear streaming buffer once done
           completedAt: Date.now(),
         });
         return { name, output };
@@ -92,7 +90,6 @@ export async function processRun(
         console.error(`Agent ${name} failed:`, err);
         updateAgent(runId, name, {
           status: "error",
-          streamingOutput: "",
           completedAt: Date.now(),
         });
         throw err;
@@ -128,14 +125,10 @@ export async function processRun(
       completedAt: Date.now(),
     });
 
-    // Publish to dev.to
-    const devtoUrl = await publishToDevTo(synthesized.blogPost);
-    updateRun(runId, { devtoUrl });
-
-    // Post to Slack
+    // Post to Slack with one-click publish buttons (no auto-publish)
     const run = getRun(runId)!;
-    await postToSlack(run, devtoUrl);
-    updateRun(runId, { slackPosted: true });
+    const slackMessageTs = await postToSlack(run);
+    updateRun(runId, { slackPosted: slackMessageTs !== null, slackMessageTs });
   } catch (err) {
     console.error("Synthesizer error:", err);
     updateSynthesizer(runId, { status: "error", completedAt: Date.now() });
