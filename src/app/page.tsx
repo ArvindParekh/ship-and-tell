@@ -1,10 +1,10 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 
-import { getAllRuns } from "@/lib/runs";
 import type { Run } from "@/lib/types";
 import { SimulateMergeButton } from "@/components/simulate-merge-button";
-
-export const dynamic = "force-dynamic";
 
 function StatusDot({ run }: { run: Run }) {
   const allDone =
@@ -58,7 +58,28 @@ function AgentProgress({ run }: { run: Run }) {
 }
 
 export default function DashboardPage() {
-  const runs = getAllRuns();
+  const [runs, setRuns] = useState<Run[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch("/api/runs");
+        if (res.ok) {
+          const data: Run[] = await res.json();
+          setRuns(data);
+        }
+      } catch {
+        // ignore fetch errors
+      }
+      if (!cancelled) setTimeout(poll, 3000);
+    };
+
+    poll();
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">

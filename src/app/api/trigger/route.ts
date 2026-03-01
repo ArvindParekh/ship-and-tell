@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { createRun } from "@/lib/runs";
-import { fetchPRDiff } from "@/lib/github";
+import { fetchDiff } from "@/lib/github";
 import { processRun } from "@/lib/pipeline";
 
 export async function POST(req: NextRequest) {
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
     diffUrl?: string;
   };
 
-  const diff = diffUrl ? await fetchPRDiff(diffUrl) : "No diff provided";
+  const diff = diffUrl ? await fetchDiff(diffUrl) : "No diff provided";
   const run = createRun({ prTitle, prUrl, repoName, prBody, diff });
 
   // Fire async, return run ID immediately
