@@ -1,6 +1,6 @@
 import { Subconscious } from "subconscious";
 
-import type { PlatformTool } from "subconscious";
+import type { PlatformTool, ReasoningNode, RunStream } from "subconscious";
 
 const client = new Subconscious({ apiKey: process.env.SUBCONSCIOUS_API_KEY! });
 
@@ -16,15 +16,45 @@ const PAGE_READER: PlatformTool = { type: "platform", id: "page_reader", options
 const GOOGLE_SEARCH: PlatformTool = { type: "platform", id: "google_search", options: {} };
 const FAST_SEARCH: PlatformTool = { type: "platform", id: "fast_search", options: {} };
 
+// --- Shared stream runner ---
+// Manually iterates the async generator to capture the Run return value
+// (for-await discards the generator's return value, so we need manual iteration)
+
+type AgentOutput = { output: string; reasoning: ReasoningNode | null };
+
+async function runStreaming(
+  stream: RunStream,
+  onDelta?: (accumulated: string) => void
+): Promise<AgentOutput> {
+  let accumulated = "";
+  let next = await stream.next();
+
+  while (!next.done) {
+    const event = next.value;
+    if (event.type === "delta") {
+      accumulated += event.content;
+      onDelta?.(accumulated);
+    } else if (event.type === "error") {
+      throw new Error(event.message);
+    }
+    next = await stream.next();
+  }
+
+  // next.value is Run | undefined (the generator's return value)
+  const run = next.value;
+  return {
+    output: accumulated || run?.result?.answer || "No output",
+    reasoning: run?.result?.reasoning ?? null,
+  };
+}
+
 // --- Agent 1: Problem Hunter ---
 
-export async function runProblemHunter(pr: {
-  title: string;
-  body: string;
-  diff: string;
-  repoName: string;
-}): Promise<string> {
-  const run = await client.run({
+export async function runProblemHunter(
+  pr: { title: string; body: string; diff: string; repoName: string },
+  onDelta?: (accumulated: string) => void
+): Promise<AgentOutput> {
+  const stream = client.stream({
     engine: "tim-gpt",
     input: {
       instructions: `
@@ -57,19 +87,17 @@ Be specific. Be concrete. Do not generalize. Real quotes over summaries.
       `.trim(),
       tools: [TWEET_SEARCH, WEB_SEARCH, GOOGLE_SEARCH],
     },
-    options: { awaitCompletion: true },
   });
-  return run.result?.answer ?? "No output";
+  return runStreaming(stream, onDelta);
 }
 
 // --- Agent 2: Prior Art Archaeologist ---
 
-export async function runPriorArt(pr: {
-  title: string;
-  body: string;
-  repoName: string;
-}): Promise<string> {
-  const run = await client.run({
+export async function runPriorArt(
+  pr: { title: string; body: string; repoName: string },
+  onDelta?: (accumulated: string) => void
+): Promise<AgentOutput> {
+  const stream = client.stream({
     engine: "tim-gpt",
     input: {
       instructions: `
@@ -98,19 +126,17 @@ Be historically accurate. Do not make up prior art. If there is none, say so hon
       `.trim(),
       tools: [WEB_SEARCH, RESEARCH_PAPER, GOOGLE_SEARCH],
     },
-    options: { awaitCompletion: true },
   });
-  return run.result?.answer ?? "No output";
+  return runStreaming(stream, onDelta);
 }
 
 // --- Agent 3: Community Finder ---
 
-export async function runCommunityFinder(pr: {
-  title: string;
-  body: string;
-  repoName: string;
-}): Promise<string> {
-  const run = await client.run({
+export async function runCommunityFinder(
+  pr: { title: string; body: string; repoName: string },
+  onDelta?: (accumulated: string) => void
+): Promise<AgentOutput> {
+  const stream = client.stream({
     engine: "tim-gpt",
     input: {
       instructions: `
@@ -138,20 +164,17 @@ Return:
       `.trim(),
       tools: [TWEET_SEARCH, FIND_SIMILAR, NEWS_SEARCH, GOOGLE_SEARCH],
     },
-    options: { awaitCompletion: true },
   });
-  return run.result?.answer ?? "No output";
+  return runStreaming(stream, onDelta);
 }
 
 // --- Agent 4: Technical Explainer ---
 
-export async function runTechnicalExplainer(pr: {
-  title: string;
-  body: string;
-  diff: string;
-  repoName: string;
-}): Promise<string> {
-  const run = await client.run({
+export async function runTechnicalExplainer(
+  pr: { title: string; body: string; diff: string; repoName: string },
+  onDelta?: (accumulated: string) => void
+): Promise<AgentOutput> {
+  const stream = client.stream({
     engine: "tim-gpt",
     input: {
       instructions: `
@@ -184,19 +207,17 @@ Return:
       `.trim(),
       tools: [WEB_SEARCH, PAGE_READER, GOOGLE_SEARCH, FAST_SEARCH],
     },
-    options: { awaitCompletion: true },
   });
-  return run.result?.answer ?? "No output";
+  return runStreaming(stream, onDelta);
 }
 
 // --- Agent 5: Timing Analyst ---
 
-export async function runTimingAnalyst(pr: {
-  title: string;
-  body: string;
-  repoName: string;
-}): Promise<string> {
-  const run = await client.run({
+export async function runTimingAnalyst(
+  pr: { title: string; body: string; repoName: string },
+  onDelta?: (accumulated: string) => void
+): Promise<AgentOutput> {
+  const stream = client.stream({
     engine: "tim-gpt",
     input: {
       instructions: `
@@ -224,9 +245,8 @@ Return:
       `.trim(),
       tools: [FRESH_SEARCH, NEWS_SEARCH, TWEET_SEARCH],
     },
-    options: { awaitCompletion: true },
   });
-  return run.result?.answer ?? "No output";
+  return runStreaming(stream, onDelta);
 }
 
 // --- Synthesizer ---

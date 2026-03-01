@@ -1,3 +1,7 @@
+import type { ReasoningNode } from "subconscious";
+
+export type { ReasoningNode };
+
 export type AgentStatus = "pending" | "running" | "done" | "error";
 
 export type AgentName =
@@ -13,6 +17,8 @@ export interface AgentResult {
   emoji: string;
   status: AgentStatus;
   output: string | null;
+  reasoning: ReasoningNode | null;
+  streamingOutput: string;
   startedAt: number | null;
   completedAt: number | null;
 }
