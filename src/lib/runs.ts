@@ -2,8 +2,15 @@ import { v4 as uuid } from "uuid";
 
 import type { Run, AgentName, AgentResult, SynthesizerResult } from "./types";
 
-// Global map -- persists across requests in the same Node.js process
-const runs = new Map<string, Run>();
+// Anchor to globalThis so the Map is a true singleton across all route
+// handlers in the same Node.js process. Without this, Next.js hot-module
+// reloading and per-route module isolation can create separate Map instances.
+declare global {
+  // eslint-disable-next-line no-var
+  var __runs: Map<string, Run> | undefined;
+}
+
+const runs: Map<string, Run> = globalThis.__runs ?? (globalThis.__runs = new Map());
 
 const AGENT_META: Record<AgentName, { label: string; emoji: string }> = {
   problem_hunter: { label: "Problem Hunter", emoji: "\u{1F3AF}" },
@@ -38,6 +45,8 @@ export function createRun(data: {
         emoji: AGENT_META[name].emoji,
         status: "pending",
         output: null,
+        reasoning: null,
+        streamingOutput: "",
         startedAt: null,
         completedAt: null,
       } as AgentResult,

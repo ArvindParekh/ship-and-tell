@@ -34,39 +34,34 @@ export async function processRun(
     diff: string;
   }
 ) {
-  const agentFunctions: Record<AgentName, () => Promise<string>> = {
-    problem_hunter: () =>
-      runProblemHunter({
-        title: pr.prTitle,
-        body: pr.prBody,
-        diff: pr.diff,
-        repoName: pr.repoName,
-      }),
-    prior_art: () =>
-      runPriorArt({
-        title: pr.prTitle,
-        body: pr.prBody,
-        repoName: pr.repoName,
-      }),
-    community_finder: () =>
-      runCommunityFinder({
-        title: pr.prTitle,
-        body: pr.prBody,
-        repoName: pr.repoName,
-      }),
-    technical_explainer: () =>
-      runTechnicalExplainer({
-        title: pr.prTitle,
-        body: pr.prBody,
-        diff: pr.diff,
-        repoName: pr.repoName,
-      }),
-    timing_analyst: () =>
-      runTimingAnalyst({
-        title: pr.prTitle,
-        body: pr.prBody,
-        repoName: pr.repoName,
-      }),
+  type AgentFn = (onDelta: (text: string) => void) => ReturnType<typeof runProblemHunter>;
+
+  const agentFunctions: Record<AgentName, AgentFn> = {
+    problem_hunter: (onDelta) =>
+      runProblemHunter(
+        { title: pr.prTitle, body: pr.prBody, diff: pr.diff, repoName: pr.repoName },
+        onDelta
+      ),
+    prior_art: (onDelta) =>
+      runPriorArt(
+        { title: pr.prTitle, body: pr.prBody, repoName: pr.repoName },
+        onDelta
+      ),
+    community_finder: (onDelta) =>
+      runCommunityFinder(
+        { title: pr.prTitle, body: pr.prBody, repoName: pr.repoName },
+        onDelta
+      ),
+    technical_explainer: (onDelta) =>
+      runTechnicalExplainer(
+        { title: pr.prTitle, body: pr.prBody, diff: pr.diff, repoName: pr.repoName },
+        onDelta
+      ),
+    timing_analyst: (onDelta) =>
+      runTimingAnalyst(
+        { title: pr.prTitle, body: pr.prBody, repoName: pr.repoName },
+        onDelta
+      ),
   };
 
   // Mark all agents as running
@@ -75,23 +70,31 @@ export async function processRun(
   }
 
   // Fire all 5 agents in parallel
-  const agentEntries = Object.entries(agentFunctions) as [
-    AgentName,
-    () => Promise<string>,
-  ][];
+  const agentEntries = Object.entries(agentFunctions) as [AgentName, AgentFn][];
   const results = await Promise.allSettled(
     agentEntries.map(async ([name, fn]) => {
+      // onDelta: update streamingOutput incrementally as text arrives
+      const onDelta = (accumulated: string) => {
+        updateAgent(runId, name, { streamingOutput: accumulated });
+      };
+
       try {
-        const output = await fn();
+        const { output, reasoning } = await fn(onDelta);
         updateAgent(runId, name, {
           status: "done",
           output,
+          reasoning,
+          streamingOutput: "", // clear streaming buffer once done
           completedAt: Date.now(),
         });
         return { name, output };
       } catch (err) {
         console.error(`Agent ${name} failed:`, err);
-        updateAgent(runId, name, { status: "error", completedAt: Date.now() });
+        updateAgent(runId, name, {
+          status: "error",
+          streamingOutput: "",
+          completedAt: Date.now(),
+        });
         throw err;
       }
     })

@@ -40,9 +40,16 @@ export function SimulateMergeButton() {
     <button
       onClick={handleClick}
       disabled={loading}
-      className="rounded-xl border border-zinc-700 bg-zinc-900 px-6 py-3 text-sm font-medium text-white transition-colors hover:border-zinc-500 hover:bg-zinc-800 disabled:opacity-50"
+      className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-border-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
     >
-      {loading ? "Triggering..." : "Simulate Merge"}
+      {loading ? (
+        <>
+          <div className="h-3 w-3 animate-spin rounded-full border border-muted-foreground/20 border-t-muted-foreground" />
+          Triggering...
+        </>
+      ) : (
+        "Simulate Merge"
+      )}
     </button>
   );
 }

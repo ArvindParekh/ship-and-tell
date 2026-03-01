@@ -6,7 +6,7 @@ import { SimulateMergeButton } from "@/components/simulate-merge-button";
 
 export const dynamic = "force-dynamic";
 
-function StatusBadge({ run }: { run: Run }) {
+function StatusDot({ run }: { run: Run }) {
   const allDone =
     Object.values(run.agents).every((a) => a.status === "done") &&
     run.synthesizer.status === "done";
@@ -14,11 +14,46 @@ function StatusBadge({ run }: { run: Run }) {
     Object.values(run.agents).some((a) => a.status === "error") ||
     run.synthesizer.status === "error";
 
-  if (hasError) return <span className="text-sm text-red-400">Error</span>;
-  if (allDone)
-    return <span className="text-sm text-emerald-400">Done</span>;
+  if (hasError) {
+    return (
+      <span className="flex items-center gap-2 text-xs text-danger">
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-danger" />
+        Failed
+      </span>
+    );
+  }
+  if (allDone) {
+    return (
+      <span className="flex items-center gap-2 text-xs text-success">
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-success" />
+        Complete
+      </span>
+    );
+  }
   return (
-    <span className="animate-pulse text-sm text-amber-400">Running...</span>
+    <span className="flex items-center gap-2 text-xs text-warning">
+      <span className="inline-block h-1.5 w-1.5 animate-subtle-pulse rounded-full bg-warning" />
+      Running
+    </span>
+  );
+}
+
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+function AgentProgress({ run }: { run: Run }) {
+  const agents = Object.values(run.agents);
+  const done = agents.filter((a) => a.status === "done").length;
+  return (
+    <span className="font-mono text-xs text-muted-foreground">
+      {done}/{agents.length}
+    </span>
   );
 }
 
@@ -26,47 +61,97 @@ export default function DashboardPage() {
   const runs = getAllRuns();
 
   return (
-    <div className="min-h-screen bg-zinc-950 p-8 text-white">
-      <div className="mx-auto max-w-3xl">
-        <div className="mb-8 flex items-start justify-between">
-          <div>
-            <h1 className="mb-2 text-3xl font-bold">Ship and Tell</h1>
-            <p className="text-zinc-400">
-              Auto-publishes content every time a PR merges.
-            </p>
+    <div className="min-h-screen bg-background">
+      {/* Top bar */}
+      <header className="border-b border-border">
+        <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-accent/10">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                className="text-accent"
+              >
+                <path
+                  d="M8 1L14.5 5v6L8 15 1.5 11V5L8 1z"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M8 1v6.5m0 0L1.5 5m6.5 2.5L14.5 5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+            <span className="text-sm font-medium tracking-tight text-foreground">
+              Ship and Tell
+            </span>
           </div>
           <SimulateMergeButton />
         </div>
+      </header>
+
+      {/* Content */}
+      <main className="mx-auto max-w-4xl px-6 py-8">
+        <div className="mb-6">
+          <h1 className="text-sm font-medium text-muted-foreground">Runs</h1>
+        </div>
 
         {runs.length === 0 ? (
-          <div className="rounded-xl border border-zinc-800 p-12 text-center text-zinc-500">
-            Waiting for a PR to merge...
+          <div className="flex flex-col items-center justify-center rounded-lg border border-border py-20">
+            <div className="mb-3 h-8 w-8 rounded-full border border-border" />
+            <p className="text-sm text-muted-foreground">
+              No runs yet. Merge a PR or simulate one to get started.
+            </p>
           </div>
         ) : (
-          <div className="space-y-4">
-            {runs.map((run) => (
+          <div className="overflow-hidden rounded-lg border border-border">
+            {/* Table header */}
+            <div className="grid grid-cols-[1fr_120px_80px_80px] gap-4 border-b border-border bg-surface px-4 py-2.5 text-xs font-medium text-muted-foreground">
+              <span>PR</span>
+              <span>Status</span>
+              <span className="text-right">Agents</span>
+              <span className="text-right">Time</span>
+            </div>
+
+            {/* Rows */}
+            {runs.map((run, i) => (
               <Link key={run.id} href={`/run/${run.id}`}>
-                <div className="cursor-pointer rounded-xl border border-zinc-800 p-6 transition-colors hover:border-zinc-600">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="text-lg font-semibold">{run.prTitle}</p>
-                      <p className="mt-1 text-sm text-zinc-400">
-                        {run.repoName}
-                      </p>
-                    </div>
-                    <StatusBadge run={run} />
-                  </div>
-                  {run.devtoUrl && (
-                    <p className="mt-3 text-sm text-emerald-400">
-                      Published to dev.to
+                <div
+                  className={`grid grid-cols-[1fr_120px_80px_80px] gap-4 px-4 py-3 transition-colors hover:bg-surface-hover ${
+                    i < runs.length - 1 ? "border-b border-border" : ""
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {run.prTitle}
                     </p>
-                  )}
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {run.repoName}
+                    </p>
+                  </div>
+                  <div className="flex items-center">
+                    <StatusDot run={run} />
+                  </div>
+                  <div className="flex items-center justify-end">
+                    <AgentProgress run={run} />
+                  </div>
+                  <div className="flex items-center justify-end">
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {formatTime(run.createdAt)}
+                    </span>
+                  </div>
                 </div>
               </Link>
             ))}
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }
