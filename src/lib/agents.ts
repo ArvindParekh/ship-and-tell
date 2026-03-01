@@ -251,21 +251,6 @@ Return:
 
 // --- Synthesizer ---
 
-// IMPORTANT: Replace the WRITING_STYLE_EXAMPLES with 2-3 real paragraphs from
-// your actual blog posts or tweets BEFORE the demo. This is what makes the
-// output sound like you and not like generic AI content.
-
-const WRITING_STYLE_EXAMPLES = `
---- EXAMPLE 1 (from a past blog post) ---
-[REPLACE THIS: paste a real paragraph from one of your blog posts]
-
---- EXAMPLE 2 (from a past blog post) ---
-[REPLACE THIS: paste another real paragraph]
-
---- EXAMPLE 3 (from a tweet thread) ---
-[REPLACE THIS: paste a tweet thread you wrote that you're proud of]
-`;
-
 export async function runSynthesizer(
   prContext: { title: string; body: string; repoName: string; prUrl: string },
   agentOutputs: Record<string, string>
@@ -274,6 +259,9 @@ export async function runSynthesizer(
   twitterThread: string[];
   hnPost: { title: string; text: string };
 }> {
+  // Cap each agent output to 1500 chars to avoid context overflow
+  const cap = (s: string) => (s.length > 1500 ? s.slice(0, 1500) + "\n[truncated]" : s);
+
   const run = await client.run({
     engine: "tim-gpt",
     input: {
@@ -289,24 +277,19 @@ You are a writing synthesizer. You have received research from 5 independent age
 ## Research from 5 Independent Agents
 
 ### Agent 1 -- Problem Hunter (real pain, real quotes)
-${agentOutputs.problem_hunter}
+${cap(agentOutputs.problem_hunter ?? "")}
 
 ### Agent 2 -- Prior Art Archaeologist (history, what failed before)
-${agentOutputs.prior_art}
+${cap(agentOutputs.prior_art ?? "")}
 
 ### Agent 3 -- Community Finder (where to share, how to frame)
-${agentOutputs.community_finder}
+${cap(agentOutputs.community_finder ?? "")}
 
 ### Agent 4 -- Technical Explainer (what it does, the insight)
-${agentOutputs.technical_explainer}
+${cap(agentOutputs.technical_explainer ?? "")}
 
 ### Agent 5 -- Timing Analyst (why now, recent context)
-${agentOutputs.timing_analyst}
-
-## Author's Writing Style
-Study these examples carefully. Your output must sound like this author wrote it -- not like generic AI content.
-
-${WRITING_STYLE_EXAMPLES}
+${cap(agentOutputs.timing_analyst ?? "")}
 
 ## Rules
 - Never start a blog post with "I'm excited to share" or "Today I want to talk about"
