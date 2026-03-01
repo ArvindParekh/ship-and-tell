@@ -51,4 +51,5 @@ export interface Run {
   synthesizer: SynthesizerResult;
   devtoUrl: string | null;
   slackPosted: boolean;
+  slackMessageTs: string | null;
 }

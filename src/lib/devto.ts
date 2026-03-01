@@ -8,13 +8,13 @@ export async function publishToDevTo(post: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "api-key": process.env.DEVTO_API_KEY!,
+        "api-key": process.env.DEV_TO_API_KEY!,
       },
       body: JSON.stringify({
         article: {
           title: post.title,
           body_markdown: post.body,
-          published: true,
+          published: false,
           tags: post.tags.slice(0, 4),
         },
       }),
@@ -24,7 +24,9 @@ export async function publishToDevTo(post: {
       return null;
     }
     const data = await res.json();
-    return data.url as string;
+    // Draft articles return a public URL that 404s. Redirect to the
+    // dashboard instead — the new draft appears at the top.
+    return `https://dev.to/dashboard`;
   } catch (err) {
     console.error("dev.to publish error:", err);
     return null;

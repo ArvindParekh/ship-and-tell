@@ -22,18 +22,50 @@ const FAST_SEARCH: PlatformTool = { type: "platform", id: "fast_search", options
 
 type AgentOutput = { output: string; reasoning: ReasoningNode | null };
 
+/**
+ * Extract all complete "thought" string values seen so far in the
+ * accumulating raw-JSON stream. Returns an array of already-unescaped strings.
+ *
+ * The SDK's stream() emits incremental JSON like:
+ *   {"reasoning":[{"title":"...","thought":"I need to search for...","tooluse":[],"subtask":[],...
+ * We pull out every "thought":"..." value that has already been closed.
+ */
+function extractThoughts(json: string): string[] {
+  const thoughts: string[] = [];
+  // Match completed "thought":"..." values (handles escaped quotes inside)
+  const re = /"thought"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(json)) !== null) {
+    const unescaped = m[1]
+      .replace(/\\n/g, "\n")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
+    if (unescaped.trim()) thoughts.push(unescaped);
+  }
+  return thoughts;
+}
+
 async function runStreaming(
   stream: RunStream,
-  onDelta?: (accumulated: string) => void
+  onDelta?: (thoughts: string[]) => void
 ): Promise<AgentOutput> {
-  let accumulated = "";
+  let rawJson = "";
+  let lastThoughtCount = 0;
   let next = await stream.next();
 
   while (!next.done) {
     const event = next.value;
     if (event.type === "delta") {
-      accumulated += event.content;
-      onDelta?.(accumulated);
+      rawJson += event.content;
+      if (onDelta) {
+        const thoughts = extractThoughts(rawJson);
+        // Only fire callback when we have new thoughts to show
+        if (thoughts.length > lastThoughtCount) {
+          lastThoughtCount = thoughts.length;
+          onDelta(thoughts);
+        }
+      }
     } else if (event.type === "error") {
       throw new Error(event.message);
     }
@@ -43,7 +75,7 @@ async function runStreaming(
   // next.value is Run | undefined (the generator's return value)
   const run = next.value;
   return {
-    output: accumulated || run?.result?.answer || "No output",
+    output: run?.result?.answer || "No output",
     reasoning: run?.result?.reasoning ?? null,
   };
 }
@@ -52,7 +84,7 @@ async function runStreaming(
 
 export async function runProblemHunter(
   pr: { title: string; body: string; diff: string; repoName: string },
-  onDelta?: (accumulated: string) => void
+  onDelta?: (thoughts: string[]) => void
 ): Promise<AgentOutput> {
   const stream = client.stream({
     engine: "tim-gpt",
@@ -95,7 +127,7 @@ Be specific. Be concrete. Do not generalize. Real quotes over summaries.
 
 export async function runPriorArt(
   pr: { title: string; body: string; repoName: string },
-  onDelta?: (accumulated: string) => void
+  onDelta?: (thoughts: string[]) => void
 ): Promise<AgentOutput> {
   const stream = client.stream({
     engine: "tim-gpt",
@@ -134,7 +166,7 @@ Be historically accurate. Do not make up prior art. If there is none, say so hon
 
 export async function runCommunityFinder(
   pr: { title: string; body: string; repoName: string },
-  onDelta?: (accumulated: string) => void
+  onDelta?: (thoughts: string[]) => void
 ): Promise<AgentOutput> {
   const stream = client.stream({
     engine: "tim-gpt",
@@ -172,7 +204,7 @@ Return:
 
 export async function runTechnicalExplainer(
   pr: { title: string; body: string; diff: string; repoName: string },
-  onDelta?: (accumulated: string) => void
+  onDelta?: (thoughts: string[]) => void
 ): Promise<AgentOutput> {
   const stream = client.stream({
     engine: "tim-gpt",
@@ -215,7 +247,7 @@ Return:
 
 export async function runTimingAnalyst(
   pr: { title: string; body: string; repoName: string },
-  onDelta?: (accumulated: string) => void
+  onDelta?: (thoughts: string[]) => void
 ): Promise<AgentOutput> {
   const stream = client.stream({
     engine: "tim-gpt",
@@ -251,20 +283,6 @@ Return:
 
 // --- Synthesizer ---
 
-// IMPORTANT: Replace the WRITING_STYLE_EXAMPLES with 2-3 real paragraphs from
-// your actual blog posts or tweets BEFORE the demo. This is what makes the
-// output sound like you and not like generic AI content.
-
-const WRITING_STYLE_EXAMPLES = `
---- EXAMPLE 1 (from a past blog post) ---
-[REPLACE THIS: paste a real paragraph from one of your blog posts]
-
---- EXAMPLE 2 (from a past blog post) ---
-[REPLACE THIS: paste another real paragraph]
-
---- EXAMPLE 3 (from a tweet thread) ---
-[REPLACE THIS: paste a tweet thread you wrote that you're proud of]
-`;
 
 export async function runSynthesizer(
   prContext: { title: string; body: string; repoName: string; prUrl: string },
@@ -274,6 +292,12 @@ export async function runSynthesizer(
   twitterThread: string[];
   hnPost: { title: string; text: string };
 }> {
+  // Cap each agent output to avoid blowing the context window
+  const cap = (s: string | undefined, limit = 1500): string => {
+    if (!s) return "(no output)";
+    return s.length > limit ? s.slice(0, limit) + "\n…(truncated)" : s;
+  };
+
   const run = await client.run({
     engine: "tim-gpt",
     input: {
@@ -289,24 +313,19 @@ You are a writing synthesizer. You have received research from 5 independent age
 ## Research from 5 Independent Agents
 
 ### Agent 1 -- Problem Hunter (real pain, real quotes)
-${agentOutputs.problem_hunter}
+${cap(agentOutputs.problem_hunter)}
 
 ### Agent 2 -- Prior Art Archaeologist (history, what failed before)
-${agentOutputs.prior_art}
+${cap(agentOutputs.prior_art)}
 
 ### Agent 3 -- Community Finder (where to share, how to frame)
-${agentOutputs.community_finder}
+${cap(agentOutputs.community_finder)}
 
 ### Agent 4 -- Technical Explainer (what it does, the insight)
-${agentOutputs.technical_explainer}
+${cap(agentOutputs.technical_explainer)}
 
 ### Agent 5 -- Timing Analyst (why now, recent context)
-${agentOutputs.timing_analyst}
-
-## Author's Writing Style
-Study these examples carefully. Your output must sound like this author wrote it -- not like generic AI content.
-
-${WRITING_STYLE_EXAMPLES}
+${cap(agentOutputs.timing_analyst)}
 
 ## Rules
 - Never start a blog post with "I'm excited to share" or "Today I want to talk about"

@@ -3,16 +3,16 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
-import type { Run, AgentResult } from "@/lib/types";
+import type { Run, AgentResult, ReasoningNode } from "@/lib/types";
 import { ReasoningTree } from "@/components/reasoning-tree";
 
-// ---- Tiny helpers ----
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function statusLabel(status: string): string {
-  if (status === "done") return "Complete";
-  if (status === "running") return "Running";
+  if (status === "done") return "Done";
+  if (status === "running") return "Thinking";
   if (status === "error") return "Failed";
-  return "Pending";
+  return "Waiting";
 }
 
 function formatDuration(start: number | null, end: number | null): string {
@@ -20,53 +20,236 @@ function formatDuration(start: number | null, end: number | null): string {
   return `${((end - start) / 1000).toFixed(1)}s`;
 }
 
-// ---- Status dot ----
+/** Count total tool calls across the entire reasoning tree */
+function countToolCalls(node: ReasoningNode | null): number {
+  if (!node) return 0;
+  const own = Array.isArray(node.tooluse) ? node.tooluse.length : 0;
+  const children = Array.isArray(node.subtask)
+    ? node.subtask.reduce((acc, child) => acc + countToolCalls(child), 0)
+    : 0;
+  return own + children;
+}
+
+/** Get the last meaningful streaming line (non-empty) for card preview */
+function lastStreamingLine(text: string): string {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  return lines[lines.length - 1] ?? "";
+}
+
+// ── Status dot ────────────────────────────────────────────────────────────────
 
 function StatusDot({ status }: { status: string }) {
-  if (status === "done") {
+  if (status === "done")
     return <span className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-success" />;
-  }
-  if (status === "running") {
-    return (
-      <span className="inline-block h-1.5 w-1.5 flex-shrink-0 animate-subtle-pulse rounded-full bg-warning" />
-    );
-  }
-  if (status === "error") {
+  if (status === "running")
+    return <span className="inline-block h-1.5 w-1.5 flex-shrink-0 animate-subtle-pulse rounded-full bg-warning" />;
+  if (status === "error")
     return <span className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-danger" />;
+  return <span className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-white/10" />;
+}
+
+// ── Agent card — compact with live preview ────────────────────────────────────
+
+function AgentCard({
+  agent,
+  isSelected,
+  onClick,
+}: {
+  agent: AgentResult;
+  isSelected: boolean;
+  onClick: () => void;
+}) {
+  const toolCount = countToolCalls(agent.reasoning);
+  const latestLine = agent.status === "running" ? lastStreamingLine(agent.streamingOutput) : "";
+
+  return (
+    <button
+      onClick={onClick}
+      className={`group relative flex flex-col gap-2 rounded-xl border p-3.5 text-left transition-all duration-150 ${
+        isSelected
+          ? "border-white/[0.14] bg-white/[0.06] shadow-[0_0_0_1px_rgba(255,255,255,0.05)]"
+          : "border-white/[0.06] bg-white/[0.025] hover:border-white/[0.1] hover:bg-white/[0.045]"
+      }`}
+    >
+      {/* Top row: emoji + status */}
+      <div className="flex items-center justify-between">
+        <span className="text-base leading-none">{agent.emoji}</span>
+        <div className="flex items-center gap-1.5">
+          <StatusDot status={agent.status} />
+          <span
+            className={`text-[10px] font-medium ${
+              agent.status === "running"
+                ? "text-warning/80"
+                : agent.status === "done"
+                ? "text-success/80"
+                : agent.status === "error"
+                ? "text-danger/80"
+                : "text-white/20"
+            }`}
+          >
+            {statusLabel(agent.status)}
+          </span>
+        </div>
+      </div>
+
+      {/* Label */}
+      <div
+        className={`text-[11px] font-medium leading-tight tracking-tight transition-colors ${
+          isSelected ? "text-foreground" : "text-white/60 group-hover:text-white/80"
+        }`}
+      >
+        {agent.label}
+      </div>
+
+      {/* Live preview line — shown while running */}
+      {agent.status === "running" && (
+        <div className="flex items-start gap-1.5">
+          <span className="mt-[3px] h-1 w-1 flex-shrink-0 animate-subtle-pulse rounded-full bg-warning/60" />
+          <p className="line-clamp-2 text-[10px] leading-[1.4] text-white/35">
+            {latestLine || "Starting research…"}
+          </p>
+        </div>
+      )}
+
+      {/* Done summary: root reasoning title + tool count */}
+      {agent.status === "done" && agent.reasoning && (
+        <div className="space-y-1">
+          <p className="line-clamp-2 text-[10px] leading-[1.4] text-white/35">
+            {agent.reasoning.title}
+          </p>
+          {toolCount > 0 && (
+            <div className="flex items-center gap-1">
+              <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-white/20">
+                <circle cx="6.5" cy="6.5" r="4.5" />
+                <path d="M10 10l3.5 3.5" strokeLinecap="round" />
+              </svg>
+              <span className="font-mono text-[10px] text-white/25">
+                {toolCount} {toolCount === 1 ? "search" : "searches"}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Pending placeholder */}
+      {agent.status === "pending" && (
+        <p className="text-[10px] text-white/15">Queued</p>
+      )}
+
+      {/* Duration */}
+      {agent.status === "done" && agent.startedAt && agent.completedAt && (
+        <span className="font-mono text-[10px] text-white/20">
+          {formatDuration(agent.startedAt, agent.completedAt)}
+        </span>
+      )}
+
+      {/* Selected indicator stripe */}
+      {isSelected && (
+        <span className="absolute bottom-0 left-3 right-3 h-px rounded-full bg-accent/40" />
+      )}
+    </button>
+  );
+}
+
+// ── Agent detail pane ─────────────────────────────────────────────────────────
+
+function ThoughtsFeed({
+  streamingOutput,
+  isRunning,
+  scrollRef,
+}: {
+  streamingOutput: string;
+  isRunning: boolean;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const thoughts = streamingOutput
+    ? streamingOutput.split("\n\n").filter(Boolean)
+    : [];
+
+  if (thoughts.length === 0) {
+    if (isRunning) {
+      return (
+        <div className="flex items-center gap-2 text-[11px] text-white/30">
+          <span className="h-3 w-3 animate-spin rounded-full border border-white/10 border-t-white/40" />
+          Initializing…
+        </div>
+      );
+    }
+    return <p className="text-[11px] text-white/20">No thoughts recorded.</p>;
   }
+
   return (
-    <span className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-muted-foreground/20" />
+    <div ref={scrollRef} className="max-h-72 overflow-y-auto space-y-2">
+      {thoughts.map((thought, i) => {
+        const isLatest = isRunning && i === thoughts.length - 1;
+        return (
+          <div
+            key={i}
+            className={`rounded-lg border px-3 py-2.5 ${
+              isLatest
+                ? "border-warning/15 bg-warning/[0.04]"
+                : "border-white/[0.05] bg-white/[0.02]"
+            }`}
+          >
+            <p
+              className={`text-[11px] leading-relaxed ${
+                isLatest ? "text-white/60" : "text-white/35"
+              }`}
+            >
+              {thought}
+              {isLatest && (
+                <span className="ml-0.5 inline-block h-3 w-px animate-subtle-pulse bg-warning/50" />
+              )}
+            </p>
+          </div>
+        );
+      })}
+    </div>
   );
 }
-
-// ---- Live streaming text with blinking cursor ----
-
-function StreamingText({ text }: { text: string }) {
-  return (
-    <span className="text-xs leading-relaxed text-muted-foreground">
-      {text}
-      <span className="ml-0.5 inline-block h-3 w-px animate-subtle-pulse bg-muted-foreground/60" />
-    </span>
-  );
-}
-
-// ---- Agent detail pane ----
 
 function AgentDetailPane({ agent }: { agent: AgentResult }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [showReasoning, setShowReasoning] = useState(false);
+  const [manualTab, setManualTab] = useState<"thoughts" | "output" | "reasoning" | null>(null);
 
-  // Auto-scroll to bottom while streaming
+  const hasThoughts = Boolean(agent.streamingOutput);
+  const hasOutput = Boolean(agent.output);
+  const hasReasoning = Boolean(agent.reasoning);
+  const toolCount = countToolCalls(agent.reasoning);
+
+  // Default tab: thoughts while running (or if done and we have them),
+  // fall back to output if no thoughts, fall back to reasoning
+  const defaultTab: "thoughts" | "output" | "reasoning" =
+    agent.status === "running"
+      ? "thoughts"
+      : hasThoughts
+      ? "thoughts"
+      : hasOutput
+      ? "output"
+      : "reasoning";
+
+  const tab = manualTab ?? defaultTab;
+
+  // Auto-scroll thoughts panel while streaming
   useEffect(() => {
     if (agent.status === "running" && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [agent.streamingOutput, agent.status]);
 
+  // Reset manual tab when a new agent is selected (agent.name changes)
+  const prevName = useRef(agent.name);
+  useEffect(() => {
+    if (prevName.current !== agent.name) {
+      prevName.current = agent.name;
+      setManualTab(null);
+    }
+  }, [agent.name]);
+
   if (agent.status === "pending") {
     return (
-      <div className="flex h-40 items-center justify-center text-xs text-muted-foreground/40">
-        Waiting for other agents to start...
+      <div className="flex h-40 items-center justify-center">
+        <span className="text-[11px] text-white/20">Waiting to start…</span>
       </div>
     );
   }
@@ -74,62 +257,102 @@ function AgentDetailPane({ agent }: { agent: AgentResult }) {
   if (agent.status === "error") {
     return (
       <div className="flex h-40 items-center justify-center">
-        <span className="text-xs text-danger">Agent failed to complete.</span>
+        <span className="text-[11px] text-danger/70">Agent failed to complete.</span>
       </div>
     );
   }
 
-  if (agent.status === "running") {
-    return (
-      <div
-        ref={scrollRef}
-        className="max-h-80 overflow-y-auto pr-1"
-      >
-        {agent.streamingOutput ? (
-          <StreamingText text={agent.streamingOutput} />
-        ) : (
-          <span className="flex items-center gap-2 text-xs text-muted-foreground/50">
-            <span className="h-3 w-3 animate-spin rounded-full border border-muted-foreground/20 border-t-muted-foreground/60" />
-            Starting research...
-          </span>
-        )}
-      </div>
-    );
+  // Build tab list based on what's available
+  type TabKey = "thoughts" | "output" | "reasoning";
+  const tabs: { key: TabKey; label: React.ReactNode }[] = [];
+
+  if (hasThoughts || agent.status === "running") {
+    tabs.push({
+      key: "thoughts",
+      label: (
+        <span className="flex items-center gap-1.5">
+          {agent.status === "running" ? (
+            <>
+              <span className="h-1 w-1 animate-subtle-pulse rounded-full bg-warning/70" />
+              Thinking
+            </>
+          ) : (
+            "Thoughts"
+          )}
+        </span>
+      ),
+    });
   }
 
-  // Status === "done"
+  if (hasOutput) {
+    tabs.push({ key: "output", label: "Output" });
+  }
+
+  if (hasReasoning) {
+    tabs.push({
+      key: "reasoning",
+      label: (
+        <span className="flex items-center gap-1.5">
+          Reasoning trace
+          {toolCount > 0 && (
+            <span className="rounded bg-white/[0.06] px-1 py-px font-mono text-[9px] text-white/30">
+              {toolCount}
+            </span>
+          )}
+        </span>
+      ),
+    });
+  }
+
   return (
     <div>
-      {/* Output */}
-      <div className="mb-4 max-h-64 overflow-y-auto pr-1">
-        <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
-          {agent.output ?? ""}
-        </p>
-      </div>
-
-      {/* Reasoning toggle */}
-      {agent.reasoning && (
-        <div>
-          <button
-            onClick={() => setShowReasoning((v) => !v)}
-            className="mb-3 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/50 transition-colors hover:text-muted-foreground"
-          >
-            <span className="font-mono">{showReasoning ? "▾" : "▸"}</span>
-            Reasoning trace
-          </button>
-
-          {showReasoning && (
-            <div className="rounded-md border border-border bg-background/50 p-3">
-              <ReasoningTree node={agent.reasoning} />
-            </div>
-          )}
+      {/* Tab bar */}
+      {tabs.length > 1 && (
+        <div className="mb-4 flex gap-0 border-b border-white/[0.06]">
+          {tabs.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setManualTab(key)}
+              className={`relative pb-2.5 pr-4 text-[10px] font-medium uppercase tracking-wider transition-colors ${
+                tab === key ? "text-foreground" : "text-white/30 hover:text-white/60"
+              }`}
+            >
+              {label}
+              {tab === key && (
+                <span className="absolute bottom-0 left-0 right-4 h-px bg-foreground/60" />
+              )}
+            </button>
+          ))}
         </div>
+      )}
+
+      {/* Thoughts tab */}
+      {tab === "thoughts" && (
+        <ThoughtsFeed
+          streamingOutput={agent.streamingOutput}
+          isRunning={agent.status === "running"}
+          scrollRef={scrollRef}
+        />
+      )}
+
+      {/* Output tab */}
+      {tab === "output" && (
+        <div className="max-h-72 overflow-y-auto">
+          <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-white/60">
+            {agent.output ?? ""}
+          </p>
+        </div>
+      )}
+
+      {/* Reasoning tab */}
+      {tab === "reasoning" && agent.reasoning && (
+        <ReasoningTree node={agent.reasoning} />
       )}
     </div>
   );
 }
 
-// ---- Main page ----
+// ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function RunPage({
   params,
@@ -146,10 +369,9 @@ export default function RunPage({
     params.then((p) => setRunId(p.id));
   }, [params]);
 
-  // Poll every 2 seconds until everything is done
+  // Poll every 1.5s until done
   useEffect(() => {
     if (!runId) return;
-
     let cancelled = false;
 
     const poll = async () => {
@@ -160,7 +382,7 @@ export default function RunPage({
         const data: Run = await res.json();
         setRun(data);
 
-        // Auto-select first running or first agent
+        // Auto-select first running agent, then fall back to first
         setSelectedAgent((prev) => {
           if (prev) return prev;
           const agents = Object.values(data.agents);
@@ -172,27 +394,26 @@ export default function RunPage({
           Object.values(data.agents).every(
             (a) => a.status === "done" || a.status === "error"
           ) &&
-          (data.synthesizer.status === "done" ||
-            data.synthesizer.status === "error");
+          (data.synthesizer.status === "done" || data.synthesizer.status === "error");
 
-        if (!allDone && !cancelled) {
-          setTimeout(poll, 1500);
-        }
+        if (!allDone && !cancelled) setTimeout(poll, 1500);
       } catch {
         if (!cancelled) setTimeout(poll, 1500);
       }
     };
 
     poll();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [runId]);
 
   if (!run) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <div className="h-4 w-4 animate-spin rounded-full border border-muted-foreground/20 border-t-muted-foreground" />
-          Loading run...
+        <div className="flex items-center gap-3 text-[11px] text-white/30">
+          <div className="h-3.5 w-3.5 animate-spin rounded-full border border-white/10 border-t-white/40" />
+          Loading run…
         </div>
       </div>
     );
@@ -200,147 +421,94 @@ export default function RunPage({
 
   const agents: AgentResult[] = Object.values(run.agents);
   const agentsDone = agents.filter((a) => a.status === "done").length;
-  const allAgentsDone = agents.every(
-    (a) => a.status === "done" || a.status === "error"
-  );
+  const allAgentsDone = agents.every((a) => a.status === "done" || a.status === "error");
   const activeAgent = agents.find((a) => a.name === selectedAgent) ?? agents[0];
 
-  const tabs = [
+  const contentTabs = [
     { key: "blog" as const, label: "Blog Post" },
     { key: "thread" as const, label: "Thread" },
-    { key: "hn" as const, label: "HN Post" },
+    { key: "hn" as const, label: "HN" },
   ];
 
   return (
     <div className="min-h-screen bg-background">
       {/* Top bar */}
-      <header className="border-b border-border">
-        <div className="mx-auto flex max-w-5xl items-center gap-4 px-6 py-4">
+      <header className="border-b border-white/[0.06]">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-6 py-4">
           <Link
             href="/"
-            className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            className="flex items-center gap-2 text-[11px] text-white/40 transition-colors hover:text-white/70"
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 16 16"
-              fill="none"
-              className="text-accent"
-            >
-              <path
-                d="M8 1L14.5 5v6L8 15 1.5 11V5L8 1z"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinejoin="round"
-              />
-              <path
-                d="M8 1v6.5m0 0L1.5 5m6.5 2.5L14.5 5"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinejoin="round"
-              />
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="text-accent">
+              <path d="M8 1L14.5 5v6L8 15 1.5 11V5L8 1z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+              <path d="M8 1v6.5m0 0L1.5 5m6.5 2.5L14.5 5" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
             </svg>
             Ship and Tell
           </Link>
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            className="text-muted-foreground/30"
-          >
-            <path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" />
-          </svg>
-          <span className="truncate text-sm text-foreground">{run.prTitle}</span>
+          <span className="text-white/[0.15]">/</span>
+          <span className="truncate text-[11px] text-white/60">{run.prTitle}</span>
         </div>
       </header>
 
       <main className="mx-auto max-w-5xl px-6 py-8">
         {/* PR meta */}
         <div className="mb-8">
-          <h1 className="text-base font-medium tracking-tight text-foreground">
-            {run.prTitle}
-          </h1>
+          <h1 className="text-sm font-medium tracking-tight text-foreground">{run.prTitle}</h1>
           <div className="mt-1.5 flex items-center gap-3">
-            <span className="text-xs text-muted-foreground">{run.repoName}</span>
-            <span className="text-muted-foreground/20">|</span>
+            <span className="text-[11px] text-white/35">{run.repoName}</span>
+            <span className="text-white/10">·</span>
             <a
               href={run.prUrl}
-              className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+              className="text-[11px] text-white/35 transition-colors hover:text-white/60"
               target="_blank"
               rel="noopener noreferrer"
             >
-              View PR
+              View PR ↗
             </a>
           </div>
         </div>
 
-        {/* ── Research Agents section ── */}
-        <div className="mb-8">
+        {/* ── Research Agents ──────────────────────────────────────────────── */}
+        <section className="mb-8">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/50">
+            <h2 className="text-[10px] font-medium uppercase tracking-widest text-white/25">
               Research Agents
             </h2>
-            <span className="font-mono text-[10px] text-muted-foreground/40">
+            <span className="font-mono text-[10px] text-white/20">
               {agentsDone}/{agents.length}
             </span>
           </div>
 
-          {/* Agent selector tabs */}
-          <div className="mb-0 grid grid-cols-5 gap-1.5">
-            {agents.map((agent) => {
-              const isSelected = selectedAgent === agent.name;
-              return (
-                <button
-                  key={agent.name}
-                  onClick={() => setSelectedAgent(agent.name)}
-                  className={`group rounded-lg border p-3 text-left transition-all ${
-                    isSelected
-                      ? "border-border-hover bg-surface-hover"
-                      : "border-border bg-surface hover:border-border-hover hover:bg-surface-hover"
-                  }`}
-                >
-                  <div className="mb-2 text-base">{agent.emoji}</div>
-                  <div
-                    className={`mb-1.5 text-[11px] font-medium leading-tight ${
-                      isSelected ? "text-foreground" : "text-muted-foreground"
-                    }`}
-                  >
-                    {agent.label}
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <StatusDot status={agent.status} />
-                    <span className="text-[10px] text-muted-foreground/60">
-                      {statusLabel(agent.status)}
-                    </span>
-                  </div>
-                  {agent.status === "done" && agent.startedAt && agent.completedAt && (
-                    <div className="mt-1 font-mono text-[10px] text-muted-foreground/30">
-                      {formatDuration(agent.startedAt, agent.completedAt)}
-                    </div>
-                  )}
-                </button>
-              );
-            })}
+          {/* 5 agent cards */}
+          <div className="grid grid-cols-5 gap-2">
+            {agents.map((agent) => (
+              <AgentCard
+                key={agent.name}
+                agent={agent}
+                isSelected={selectedAgent === agent.name}
+                onClick={() => setSelectedAgent(agent.name)}
+              />
+            ))}
           </div>
 
-          {/* Agent detail pane */}
+          {/* Detail pane */}
           {activeAgent && (
-            <div className="rounded-b-lg border border-t-0 border-border-hover bg-surface p-5">
+            <div className="mt-2 rounded-xl border border-white/[0.08] bg-white/[0.025] p-5">
               {/* Pane header */}
-              <div className="mb-4 flex items-center gap-2">
+              <div className="mb-4 flex items-center gap-2.5 border-b border-white/[0.05] pb-3.5">
                 <span className="text-sm">{activeAgent.emoji}</span>
-                <span className="text-xs font-medium text-foreground">
+                <span className="text-[11px] font-medium text-foreground/80">
                   {activeAgent.label}
                 </span>
-                <span className="text-muted-foreground/30">·</span>
+                <span className="text-white/[0.15]">·</span>
                 <div className="flex items-center gap-1.5">
                   <StatusDot status={activeAgent.status} />
-                  <span className="text-xs text-muted-foreground/60">
+                  <span className="text-[10px] text-white/35">
                     {statusLabel(activeAgent.status)}
-                    {activeAgent.status === "done" && activeAgent.startedAt && activeAgent.completedAt &&
-                      ` · ${formatDuration(activeAgent.startedAt, activeAgent.completedAt)}`
-                    }
+                    {activeAgent.status === "done" &&
+                      activeAgent.startedAt &&
+                      activeAgent.completedAt &&
+                      ` · ${formatDuration(activeAgent.startedAt, activeAgent.completedAt)}`}
                   </span>
                 </div>
               </div>
@@ -348,78 +516,74 @@ export default function RunPage({
               <AgentDetailPane agent={activeAgent} />
             </div>
           )}
-        </div>
+        </section>
 
-        {/* ── Synthesizer ── */}
-        <div className="mb-8">
+        {/* ── Synthesizer ──────────────────────────────────────────────────── */}
+        <section className="mb-8">
           <div className="mb-3">
-            <h2 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/50">
+            <h2 className="text-[10px] font-medium uppercase tracking-widest text-white/25">
               Synthesizer
             </h2>
           </div>
 
-          <div className="rounded-lg border border-border bg-surface p-4">
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.025] p-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-accent-muted text-sm">
-                {"\u{1F9E0}"}
+              <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-accent/10 text-sm">
+                🧠
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium text-foreground">
-                  Content Synthesis
-                </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] font-medium text-foreground/80">Content Synthesis</div>
                 <div className="mt-0.5 flex items-center gap-1.5">
                   <StatusDot status={run.synthesizer.status} />
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-[10px] text-white/35">
                     {run.synthesizer.status === "pending" && !allAgentsDone && "Waiting for agents"}
-                    {run.synthesizer.status === "pending" && allAgentsDone && "Starting..."}
-                    {run.synthesizer.status === "running" && "Writing blog post, thread, and HN post..."}
+                    {run.synthesizer.status === "pending" && allAgentsDone && "Starting…"}
+                    {run.synthesizer.status === "running" && "Writing blog post, thread, and HN post…"}
                     {run.synthesizer.status === "done" && "Content ready"}
                     {run.synthesizer.status === "error" && "Synthesis failed"}
                   </span>
                 </div>
               </div>
               {run.synthesizer.status === "running" && (
-                <div className="h-4 w-4 flex-shrink-0 animate-spin rounded-full border border-accent/20 border-t-accent" />
+                <div className="h-3.5 w-3.5 flex-shrink-0 animate-spin rounded-full border border-accent/20 border-t-accent/70" />
               )}
             </div>
 
             {/* Progress bar */}
             {run.synthesizer.status !== "done" && run.synthesizer.status !== "error" && (
-              <div className="mt-3 h-px overflow-hidden rounded-full bg-border">
+              <div className="mt-3 h-px overflow-hidden rounded-full bg-white/[0.05]">
                 <div
                   className={`h-full rounded-full transition-all duration-700 ${
-                    run.synthesizer.status === "running"
-                      ? "w-2/3 bg-accent"
-                      : "bg-muted-foreground/20"
+                    run.synthesizer.status === "running" ? "bg-accent/60" : "bg-white/10"
                   }`}
                   style={{
                     width:
-                      run.synthesizer.status === "pending"
-                        ? `${(agentsDone / agents.length) * 100}%`
-                        : undefined,
+                      run.synthesizer.status === "running"
+                        ? "66%"
+                        : `${(agentsDone / agents.length) * 100}%`,
                   }}
                 />
               </div>
             )}
           </div>
-        </div>
+        </section>
 
-        {/* Published actions */}
+        {/* ── Published badges ─────────────────────────────────────────────── */}
         {(run.devtoUrl || run.slackPosted) && (
-          <div className="mb-8 flex items-center gap-3">
+          <div className="mb-8 flex items-center gap-2">
             {run.devtoUrl && (
               <a
                 href={run.devtoUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-border-hover hover:bg-surface-hover"
+                className="flex items-center gap-2 rounded-lg border border-white/[0.07] bg-success/[0.07] px-3 py-1.5 text-[10px] font-medium text-success/80 transition-colors hover:bg-success/10"
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-success" />
                 Published to dev.to
               </a>
             )}
             {run.slackPosted && (
-              <span className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-xs text-muted-foreground">
+              <span className="flex items-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.03] px-3 py-1.5 text-[10px] text-white/35">
                 <span className="h-1.5 w-1.5 rounded-full bg-success" />
                 Notified Slack
               </span>
@@ -427,37 +591,37 @@ export default function RunPage({
           </div>
         )}
 
-        {/* Content tabs */}
+        {/* ── Generated Content ─────────────────────────────────────────────── */}
         {run.synthesizer.status === "done" && run.synthesizer.blogPost && (
-          <div>
+          <section>
             <div className="mb-3">
-              <h2 className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/50">
+              <h2 className="text-[10px] font-medium uppercase tracking-widest text-white/25">
                 Generated Content
               </h2>
             </div>
 
             {/* Tab bar */}
-            <div className="mb-0 flex gap-1 border-b border-border">
-              {tabs.map((tab) => (
+            <div className="flex gap-0 border-b border-white/[0.06]">
+              {contentTabs.map((t) => (
                 <button
-                  key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`relative px-3 pb-2.5 pt-1 text-xs transition-colors ${
-                    activeTab === tab.key
+                  key={t.key}
+                  onClick={() => setActiveTab(t.key)}
+                  className={`relative pb-2.5 pr-5 text-[10px] font-medium uppercase tracking-wider transition-colors ${
+                    activeTab === t.key
                       ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                      : "text-white/30 hover:text-white/60"
                   }`}
                 >
-                  {tab.label}
-                  {activeTab === tab.key && (
-                    <span className="absolute bottom-0 left-0 right-0 h-px bg-foreground" />
+                  {t.label}
+                  {activeTab === t.key && (
+                    <span className="absolute bottom-0 left-0 right-5 h-px bg-foreground/60" />
                   )}
                 </button>
               ))}
             </div>
 
             {/* Tab content */}
-            <div className="rounded-b-lg border border-t-0 border-border bg-surface p-5">
+            <div className="mt-0 rounded-b-xl border border-t-0 border-white/[0.06] bg-white/[0.025] p-5">
               {activeTab === "blog" && (
                 <div>
                   <h2 className="mb-2 text-sm font-semibold text-foreground">
@@ -467,14 +631,14 @@ export default function RunPage({
                     {run.synthesizer.blogPost.tags.map((tag) => (
                       <span
                         key={tag}
-                        className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground"
+                        className="rounded-md border border-white/[0.07] bg-white/[0.03] px-2 py-0.5 text-[10px] text-white/40"
                       >
                         {tag}
                       </span>
                     ))}
                   </div>
-                  <div className="max-h-96 overflow-y-auto pr-1">
-                    <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+                  <div className="max-h-96 overflow-y-auto">
+                    <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-white/60">
                       {run.synthesizer.blogPost.body}
                     </p>
                   </div>
@@ -484,20 +648,23 @@ export default function RunPage({
               {activeTab === "thread" && (
                 <div className="space-y-2">
                   {run.synthesizer.twitterThread.map((tweet, i) => (
-                    <div key={i} className="rounded-md border border-border p-3">
+                    <div
+                      key={i}
+                      className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3"
+                    >
                       <div className="mb-1.5 flex items-center justify-between">
-                        <span className="font-mono text-[10px] text-muted-foreground/40">
+                        <span className="font-mono text-[9px] text-white/20">
                           {i + 1}/{run.synthesizer.twitterThread.length}
                         </span>
                         <span
-                          className={`font-mono text-[10px] ${
-                            tweet.length > 280 ? "text-danger" : "text-muted-foreground/30"
+                          className={`font-mono text-[9px] ${
+                            tweet.length > 280 ? "text-danger/70" : "text-white/20"
                           }`}
                         >
                           {tweet.length}/280
                         </span>
                       </div>
-                      <p className="text-xs text-foreground">{tweet}</p>
+                      <p className="text-[11px] leading-relaxed text-white/70">{tweet}</p>
                     </div>
                   ))}
                 </div>
@@ -506,25 +673,25 @@ export default function RunPage({
               {activeTab === "hn" && run.synthesizer.hnPost && (
                 <div>
                   <div className="mb-3">
-                    <span className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground/40">
+                    <span className="mb-1.5 block text-[9px] uppercase tracking-widest text-white/25">
                       Title
                     </span>
-                    <p className="text-xs font-medium text-foreground">
+                    <p className="text-[11px] font-medium text-foreground/80">
                       {run.synthesizer.hnPost.title}
                     </p>
                   </div>
                   <div>
-                    <span className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground/40">
+                    <span className="mb-1.5 block text-[9px] uppercase tracking-widest text-white/25">
                       Text
                     </span>
-                    <p className="text-xs leading-relaxed text-muted-foreground">
+                    <p className="text-[11px] leading-relaxed text-white/60">
                       {run.synthesizer.hnPost.text}
                     </p>
                   </div>
                 </div>
               )}
             </div>
-          </div>
+          </section>
         )}
       </main>
     </div>

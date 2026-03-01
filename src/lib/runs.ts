@@ -6,8 +6,8 @@ import type { Run, AgentName, AgentResult, SynthesizerResult } from "./types";
 // handlers in the same Node.js process. Without this, Next.js hot-module
 // reloading and per-route module isolation can create separate Map instances.
 declare global {
-  // eslint-disable-next-line no-var
-  var __runs: Map<string, Run> | undefined;
+  // `declare global` in TypeScript only supports `var` declarations — cannot use let/const here
+  var __runs: Map<string, Run> | undefined; // eslint-disable-line no-var
 }
 
 const runs: Map<string, Run> = globalThis.__runs ?? (globalThis.__runs = new Map());
@@ -68,6 +68,7 @@ export function createRun(data: {
     },
     devtoUrl: null,
     slackPosted: false,
+    slackMessageTs: null,
   };
 
   runs.set(id, run);

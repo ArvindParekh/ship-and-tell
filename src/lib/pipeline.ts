@@ -12,7 +12,6 @@ import {
   runTimingAnalyst,
   runSynthesizer,
 } from "@/lib/agents";
-import { publishToDevTo } from "@/lib/devto";
 import { postToSlack } from "@/lib/slack";
 import type { AgentName } from "@/lib/types";
 
@@ -34,7 +33,7 @@ export async function processRun(
     diff: string;
   }
 ) {
-  type AgentFn = (onDelta: (text: string) => void) => ReturnType<typeof runProblemHunter>;
+  type AgentFn = (onDelta: (thoughts: string[]) => void) => ReturnType<typeof runProblemHunter>;
 
   const agentFunctions: Record<AgentName, AgentFn> = {
     problem_hunter: (onDelta) =>
@@ -73,9 +72,10 @@ export async function processRun(
   const agentEntries = Object.entries(agentFunctions) as [AgentName, AgentFn][];
   const results = await Promise.allSettled(
     agentEntries.map(async ([name, fn]) => {
-      // onDelta: update streamingOutput incrementally as text arrives
-      const onDelta = (accumulated: string) => {
-        updateAgent(runId, name, { streamingOutput: accumulated });
+      // onDelta: called with the list of parsed thought strings so far
+      const onDelta = (thoughts: string[]) => {
+        // Join thoughts with a separator so the UI can display them as a clean feed
+        updateAgent(runId, name, { streamingOutput: thoughts.join("\n\n") });
       };
 
       try {
@@ -84,7 +84,7 @@ export async function processRun(
           status: "done",
           output,
           reasoning,
-          streamingOutput: "", // clear streaming buffer once done
+          // Keep streamingOutput as-is so the UI can still show the thought feed
           completedAt: Date.now(),
         });
         return { name, output };
@@ -128,14 +128,10 @@ export async function processRun(
       completedAt: Date.now(),
     });
 
-    // Publish to dev.to
-    const devtoUrl = await publishToDevTo(synthesized.blogPost);
-    updateRun(runId, { devtoUrl });
-
-    // Post to Slack
+    // Post to Slack with review + action buttons (no auto-publish)
     const run = getRun(runId)!;
-    await postToSlack(run, devtoUrl);
-    updateRun(runId, { slackPosted: true });
+    const slackMessageTs = await postToSlack(run);
+    updateRun(runId, { slackPosted: slackMessageTs !== null, slackMessageTs });
   } catch (err) {
     console.error("Synthesizer error:", err);
     updateSynthesizer(runId, { status: "error", completedAt: Date.now() });
