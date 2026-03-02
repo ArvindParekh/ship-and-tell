@@ -8,7 +8,7 @@ export async function publishToDevTo(post: {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "api-key": process.env.DEVTO_API_KEY!,
+        "api-key": process.env.DEV_TO_API_KEY!,
       },
       body: JSON.stringify({
         article: {

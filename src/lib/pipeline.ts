@@ -79,6 +79,9 @@ export async function processRun(
 
       try {
         const { output, reasoning } = await fn(onDelta);
+        if (reasoning) {
+          console.log(`[${name}] reasoning shape:`, JSON.stringify(reasoning, null, 2).slice(0, 500));
+        }
         updateAgent(runId, name, {
           status: "done",
           output,

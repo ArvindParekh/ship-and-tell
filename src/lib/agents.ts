@@ -1,6 +1,8 @@
 import { Subconscious } from "subconscious";
 
-import type { PlatformTool, ReasoningNode, RunStream } from "subconscious";
+import type { PlatformTool, RunStream } from "subconscious";
+
+import type { ReasoningData } from "@/lib/types";
 
 const client = new Subconscious({ apiKey: process.env.SUBCONSCIOUS_API_KEY! });
 
@@ -11,7 +13,7 @@ const FAST_SEARCH: PlatformTool = { type: "platform", id: "fast_search", options
 
 // --- Shared stream runner ---
 
-type AgentOutput = { output: string; reasoning: ReasoningNode | null };
+type AgentOutput = { output: string; reasoning: ReasoningData | null };
 
 async function runStreaming(
   stream: RunStream,

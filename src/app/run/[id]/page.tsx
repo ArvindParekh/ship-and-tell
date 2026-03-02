@@ -112,15 +112,23 @@ function AgentDetailPane({ agent }: { agent: AgentResult }) {
         <div>
           <button
             onClick={() => setShowReasoning((v) => !v)}
-            className="mb-3 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+            className="mb-3 flex items-center gap-1.5 text-[11px] text-muted-foreground/40 transition-colors hover:text-muted-foreground/70"
           >
-            <span className="font-mono">{showReasoning ? "▾" : "▸"}</span>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 16 16"
+              fill="none"
+              className={`transition-transform ${showReasoning ? "rotate-90" : ""}`}
+            >
+              <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
             Reasoning trace
           </button>
 
           {showReasoning && (
-            <div className="rounded-md border border-border bg-background/50 p-3">
-              <ReasoningTree node={agent.reasoning} />
+            <div className="rounded-lg border border-border bg-background/30 px-4 py-3">
+              <ReasoningTree data={agent.reasoning} />
             </div>
           )}
         </div>
