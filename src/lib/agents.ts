@@ -15,6 +15,67 @@ const FAST_SEARCH: PlatformTool = { type: "platform", id: "fast_search", options
 
 type AgentOutput = { output: string; reasoning: ReasoningData | null };
 
+/**
+ * Extract human-readable thoughts from the raw JSON being streamed by the
+ * Subconscious SDK.  The stream builds a JSON object like:
+ *   {"reasoning":[{"title":"...","thought":"...","conclusion":"..."}, ...], "answer":"..."}
+ *
+ * We use regex to pull out `thought`, `title`, and `conclusion` values
+ * that have been fully written so far, and format them as clean text.
+ */
+function extractThoughtsFromStream(raw: string): string {
+  const seen: string[] = [];
+
+  // Pull out title values
+  const titlePattern = /"title"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  const thoughtPattern = /"thought"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  const conclusionPattern = /"conclusion"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+
+  // Collect all titles, thoughts, conclusions with their positions
+  const entries: { pos: number; type: "title" | "thought" | "conclusion"; text: string }[] = [];
+
+  let match;
+  while ((match = titlePattern.exec(raw)) !== null) {
+    const text = match[1]
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\")
+      .trim();
+    if (text) entries.push({ pos: match.index, type: "title", text });
+  }
+  while ((match = thoughtPattern.exec(raw)) !== null) {
+    const text = match[1]
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\")
+      .trim();
+    if (text) entries.push({ pos: match.index, type: "thought", text });
+  }
+  while ((match = conclusionPattern.exec(raw)) !== null) {
+    const text = match[1]
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\")
+      .trim();
+    if (text) entries.push({ pos: match.index, type: "conclusion", text });
+  }
+
+  // Sort by position in the stream
+  entries.sort((a, b) => a.pos - b.pos);
+
+  for (const entry of entries) {
+    if (entry.type === "title") {
+      seen.push(`\n## ${entry.text}`);
+    } else if (entry.type === "thought") {
+      seen.push(entry.text);
+    } else if (entry.type === "conclusion") {
+      seen.push(`> ${entry.text}`);
+    }
+  }
+
+  return seen.join("\n\n").trim();
+}
+
 async function runStreaming(
   stream: RunStream,
   onDelta?: (accumulated: string) => void
@@ -26,7 +87,11 @@ async function runStreaming(
     const event = next.value;
     if (event.type === "delta") {
       accumulated += event.content;
-      onDelta?.(accumulated);
+      // Extract readable thoughts from the raw JSON stream
+      if (onDelta) {
+        const readable = extractThoughtsFromStream(accumulated);
+        onDelta(readable || "Thinking...");
+      }
     } else if (event.type === "error") {
       throw new Error(event.message);
     }
@@ -34,8 +99,13 @@ async function runStreaming(
   }
 
   const run = next.value;
+
+  // For the final output, prefer the clean answer from the SDK result
+  const answer = run?.result?.answer;
+  const finalOutput = answer || accumulated || "No output";
+
   return {
-    output: accumulated || run?.result?.answer || "No output",
+    output: finalOutput,
     reasoning: run?.result?.reasoning ?? null,
   };
 }

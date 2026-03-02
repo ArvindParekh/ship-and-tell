@@ -7,8 +7,7 @@ import { publishToDevTo } from "@/lib/devto";
  * GET /api/publish/devto?runId=xxx
  *
  * Called when the user clicks the "Publish to dev.to" button in Slack.
- * Creates a draft on dev.to and redirects the browser to the dev.to dashboard
- * where the draft appears at the top.
+ * Creates a draft on dev.to and redirects the browser to the draft editor.
  */
 export async function GET(req: NextRequest) {
   const runId = req.nextUrl.searchParams.get("runId");
@@ -28,8 +27,10 @@ export async function GET(req: NextRequest) {
   const devtoUrl = await publishToDevTo(run.synthesizer.blogPost);
   if (devtoUrl) {
     updateRun(runId, { devtoUrl });
+    // Redirect to the draft editor page
+    return NextResponse.redirect(devtoUrl);
   }
 
-  // Redirect to dev.to dashboard (draft appears at top)
-  return NextResponse.redirect(devtoUrl ?? "https://dev.to/dashboard");
+  // Publishing failed — redirect to dashboard with an error indication
+  return NextResponse.redirect("https://dev.to/dashboard");
 }
