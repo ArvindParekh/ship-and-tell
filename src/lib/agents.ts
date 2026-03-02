@@ -100,13 +100,34 @@ async function runStreaming(
 
   const run = next.value;
 
-  // For the final output, prefer the clean answer from the SDK result
-  const answer = run?.result?.answer;
+  // The SDK's stream done value may or may not populate result.answer.
+  // The accumulated text from deltas IS the full JSON: {"reasoning": [...], "answer": "..."}
+  // Try to parse it to extract the clean answer and structured reasoning.
+  let parsedAnswer: string | null = null;
+  let parsedReasoning: ReasoningData | null = null;
+
+  if (accumulated) {
+    try {
+      const parsed = JSON.parse(accumulated);
+      if (typeof parsed.answer === "string") {
+        parsedAnswer = parsed.answer;
+      }
+      if (parsed.reasoning) {
+        parsedReasoning = parsed.reasoning;
+      }
+    } catch {
+      // Not valid JSON — the accumulated text might be plain text
+    }
+  }
+
+  // Prefer SDK result if available, then parsed stream, then raw accumulated
+  const answer = run?.result?.answer ?? parsedAnswer;
+  const reasoning = run?.result?.reasoning ?? parsedReasoning;
   const finalOutput = answer || accumulated || "No output";
 
   return {
     output: finalOutput,
-    reasoning: run?.result?.reasoning ?? null,
+    reasoning: reasoning ?? null,
   };
 }
 

@@ -1,3 +1,14 @@
+/**
+ * Sanitize a tag for dev.to: lowercase, alphanumeric only, max 30 chars.
+ * Tags with spaces/hyphens are collapsed (e.g. "User Experience" → "userexperience").
+ */
+function sanitizeTag(tag: string): string {
+  return tag
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 30);
+}
+
 export async function publishToDevTo(post: {
   title: string;
   body: string;
@@ -8,6 +19,12 @@ export async function publishToDevTo(post: {
     console.error("dev.to publish failed: neither DEVTO_API_KEY nor DEV_TO_API_KEY is set");
     return null;
   }
+
+  // dev.to tags must be lowercase alphanumeric, no spaces/hyphens
+  const cleanTags = post.tags
+    .map(sanitizeTag)
+    .filter((t) => t.length > 0)
+    .slice(0, 4);
 
   try {
     const res = await fetch("https://dev.to/api/articles", {
@@ -21,7 +38,7 @@ export async function publishToDevTo(post: {
           title: post.title,
           body_markdown: post.body,
           published: false,
-          tags: post.tags.slice(0, 4),
+          tags: cleanTags,
         },
       }),
     });
